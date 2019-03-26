@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"strings"
 	//"math/big"
 	"net/http"
 	"os"
@@ -83,7 +84,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
 	var t interface{}
 	decoder.Decode(&t)
-
+	req.Body.Close()
 	//bodyDec, _ := json.Decode(body)
 	fmt.Println(method)
 	fmt.Println(urlpath)
@@ -102,6 +103,19 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}*/
 
+	urlPathSplit := strings.Split(urlpath, "/")
+	fmt.Println(urlPathSplit)
+	if "/api/v1/servers" == strings.Join(urlPathSplit[:4], "/") {
+		if "zones" == urlPathSplit[5] {
+			if 7 == len(urlPathSplit) {
+				domainSplit := strings.Split(urlPathSplit[6], ".")
+				fmt.Println(domainSplit)
+			}
+		}
+		fmt.Println("Hallo")
+	}
+
+	fmt.Println(strings.Join(urlPathSplit[:4], "/"))
 	w.Write([]byte("test"))
 }
 
