@@ -20,9 +20,9 @@ import (
 
 func main() {
 
-	certPath := "/etc/ssl/gotest.smartrns.net"
+	certPath := "/etc/ssl/api.smartrns.net"
 	//caCert, err := ioutil.ReadFile("/var/www/api/ca/certs/ca.cert.pem")
-	caCert, err := ioutil.ReadFile("/var/www/api/ca/certs/ca-root.pem")
+	caCert, err := ioutil.ReadFile("ca-root.pem")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -34,8 +34,8 @@ func main() {
 		ClientCAs:  caCertPool,
 	}
 	h := handler{}
-	h.SetCAKey("/var/www/api/ca/private/dec.ca.key.pem")
-	h.SetCACert("/var/www/api/ca/certs/ca-root.pem")
+	h.SetCAKey("dec.ca.key.pem")
+	h.SetCACert("ca-root.pem")
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGHUP)
 	go func() {
@@ -43,8 +43,8 @@ func main() {
 			println(sig)
 			fmt.Printf("Got A HUP Signal! Now Reloading Conf....\n")
 			//h.SetCAKey("/var/www/api/ca/private/dec.ca.key.pem")
-			h.SetCAKey("sigsso_private.key")
-			h.SetCACert("/var/www/api/ca/certs/ca.cert.pem")
+			h.SetCAKey("dec.ca.key.pem")
+			h.SetCACert("ca.cert.pem")
 		}
 	}()
 	srv := &http.Server{
@@ -112,7 +112,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if ok, name := IsSubset([]string{DNSName}, peerDNSNames); ok {
 		body, _ := json.Marshal(t)
 		bodyrdr := strings.NewReader(string(body))
-		r, _ := http.NewRequest(method, "http://localhost"+urlpath, bodyrdr)
+		r, _ := http.NewRequest(method, "http://localhost:8081"+urlpath, bodyrdr)
 		r.Header.Set("X-Api-Key", "changeme")
 		resp, _ := http.DefaultClient.Do(r)
 		respBA, _ := ioutil.ReadAll(resp.Body)
