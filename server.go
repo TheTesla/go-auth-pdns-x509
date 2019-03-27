@@ -32,7 +32,6 @@ func main() {
 		//ClientAuth: tls.RequestClientCert,
 		ClientAuth: tls.RequireAndVerifyClientCert,
 		ClientCAs:  caCertPool,
-		//RootCAs:  caCertPool,
 	}
 	h := handler{}
 	h.SetCAKey("/var/www/api/ca/private/dec.ca.key.pem")
@@ -77,19 +76,14 @@ func (h *handler) SetCACert(filename string) {
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
-	//req.ParseForm()
 	method := req.Method
 	urlpath := req.URL.Path
-	//body, _ := ioutil.ReadAll(req.Body)
 	decoder := json.NewDecoder(req.Body)
 	var t interface{}
 	decoder.Decode(&t)
-	req.Body.Close()
-	//bodyDec, _ := json.Decode(body)
+	defer req.Body.Close()
 	fmt.Println(method)
 	fmt.Println(urlpath)
-	//fmt.Println(string(body))
-	//fmt.Println(bodyDec)
 	peerCerts := req.TLS.PeerCertificates
 	dbg2, err := json.Marshal(t)
 	fmt.Println(err)
@@ -98,25 +92,37 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	peerDNSNames := peerCerts[0].DNSNames
 	fmt.Println(peerDNSNames)
-	/*if ok, name := IsSubset(clientDNSNames, peerDNSNames); !ok {
-		fmt.Printf("DNS name not authorized by client certificate: %s\n", name)
-		return
-	}*/
 
 	urlPathSplit := strings.Split(urlpath, "/")
 	fmt.Println(urlPathSplit)
+	var DNSName string
 	if "/api/v1/servers" == strings.Join(urlPathSplit[:4], "/") {
 		if "zones" == urlPathSplit[5] {
 			if 7 == len(urlPathSplit) {
-				domainSplit := strings.Split(urlPathSplit[6], ".")
-				fmt.Println(domainSplit)
+				DNSName = urlPathSplit[6]
+			} else {
+				DNSName = t.(map[string]interface{})["name"].(string)
 			}
 		}
 		fmt.Println("Hallo")
 	}
 
+	fmt.Println(DNSName)
+	var respBody string
+	if ok, name := IsSubset([]string{DNSName}, peerDNSNames); ok {
+		body, _ := json.Marshal(t)
+		bodyrdr := strings.NewReader(string(body))
+		r, _ := http.NewRequest(method, "http://localhost"+urlpath, bodyrdr)
+		r.Header.Set("X-Api-Key", "changeme")
+		resp, _ := http.DefaultClient.Do(r)
+		respBA, _ := ioutil.ReadAll(resp.Body)
+		respBody = string(respBA)
+		defer resp.Body.Close()
+	} else {
+		fmt.Printf("DNS name not authorized by client certificate: %s\n", name)
+	}
 	fmt.Println(strings.Join(urlPathSplit[:4], "/"))
-	w.Write([]byte("test"))
+	w.Write([]byte(respBody))
 }
 
 func IsSubset(x, y []string) (bool, string) {
