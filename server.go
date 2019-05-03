@@ -90,11 +90,17 @@ func (j *JSONrequest) DecodeReq(req *http.Request) {
 	defer req.Body.Close()
 }
 
+func decodeJSONrequest(req *http.Request) (JSONrequest){
+	var jsonReq JSONrequest
+	jsonReq.DecodeReq(req)
+	return jsonReq
+}
+
 func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
-	var jsonReq JSONrequest
+	//var jsonReq JSONrequest
 	var respBody string
-	jsonReq.DecodeReq(req)
+	jsonReq := decodeJSONrequest(req)
 	if jsonReq.decodeErr != nil {
 		respBody = "{\"error\": \"json decode error\"}"
 		w.WriteHeader(http.StatusBadRequest)
