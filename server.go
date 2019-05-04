@@ -96,59 +96,48 @@ func decodeJSONrequest(req *http.Request) (JSONrequest){
 	return jsonReq
 }
 
-func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-
-	//var jsonReq JSONrequest
-	var respBody string
-	jsonReq := decodeJSONrequest(req)
+func handleJSONdecodeError(jsonReq JSONrequest, w http.ResponseWriter) (interface{}) {
 	if jsonReq.decodeErr != nil {
-		respBody = "{\"error\": \"json decode error\"}"
 		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(respBody))
+		w.Write([]byte("{\"error\": \"json decode error\"}"))
+	}
+	return jsonReq.decodeErr
+}
+
+func contactPDNS(jsonReq JSONrequest, baseURL string, apiKey string) (respBody string, respStatusCode int) {
+	body, _ := json.Marshal(jsonReq.jsonInterface)
+	bodyrdr := strings.NewReader(string(body))
+	r, _ := http.NewRequest(jsonReq.method, baseURL+jsonReq.urlpath, bodyrdr)
+	r.Header.Set("X-Api-Key", apiKey)
+	resp, _ := http.DefaultClient.Do(r)
+	respBA, _ := ioutil.ReadAll(resp.Body)
+	respBody = string(respBA)
+	defer resp.Body.Close()
+	return respBody, resp.StatusCode
+}
+
+func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	jsonReq := decodeJSONrequest(req)
+	if err := handleJSONdecodeError(jsonReq, w); err != nil {
 		return
 	}
-	//method := req.Method
-	//urlpath := req.URL.Path
-	//decoder := json.NewDecoder(req.Body)
-	//var t interface{}
-	//if err := decoder.Decode(&t); err != nil {
-	//	fmt.Println(err)
-	//}
-	//defer req.Body.Close()
-	//fmt.Println(method)
-	//fmt.Println(urlpath)
+
 	peerCerts := req.TLS.PeerCertificates
-	//dbg2, err := json.Marshal(t)
-	//fmt.Println(err)
-	//fmt.Println(string(dbg2))
-	//fmt.Println(peerCerts[0].DNSNames)
 
 	peerDNSNames := peerCerts[0].DNSNames
-	//fmt.Println(peerDNSNames)
 
-	urlPathSplit := strings.Split(jsonReq.urlpath, "/")
 	DNSName := getDNSName(jsonReq.urlpath, jsonReq.jsonInterface)
 
 	fmt.Println(DNSName)
 	if ok, name := IsSubset([]string{DNSName}, peerDNSNames); ok {
-		body, _ := json.Marshal(jsonReq.jsonInterface)
-		bodyrdr := strings.NewReader(string(body))
-		r, _ := http.NewRequest(jsonReq.method, "http://localhost:8081"+jsonReq.urlpath, bodyrdr)
-		r.Header.Set("X-Api-Key", "changeme")
-		resp, _ := http.DefaultClient.Do(r)
-
-		w.WriteHeader(resp.StatusCode)
-
-		respBA, _ := ioutil.ReadAll(resp.Body)
-		respBody = string(respBA)
-		defer resp.Body.Close()
+		respBody, respStatusCode := contactPDNS(jsonReq, "http://localhost:8081", "changeme")
+		w.WriteHeader(respStatusCode)
+		w.Write([]byte(respBody))
 	} else {
 		fmt.Printf("DNS name not authorized by client certificate: %s\n", name)
 		w.WriteHeader(http.StatusForbidden)
-		respBody = fmt.Sprintf("{\"error\": \"name '%s' not authorized by client certificate\"}", DNSName)
+		w.Write([]byte(fmt.Sprintf("{\"error\": \"name '%s' not authorized by client certificate\"}", DNSName)))
 	}
-	fmt.Println(strings.Join(urlPathSplit[:4], "/"))
-	w.Write([]byte(respBody))
 }
 
 
