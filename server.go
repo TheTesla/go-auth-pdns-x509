@@ -17,7 +17,69 @@ import (
 	"os/signal"
 	"syscall"
 	//"time"
+	"sync"
 )
+
+
+type certReloader struct {
+	certMu   sync.RWMutex
+	cert     *tls.Certificate
+	certPath string
+	keyPath  string
+}
+
+func NewCertReloader(certPath, keyPath string) (*certReloader, error) {
+        result := &certReloader{
+                certPath: certPath,
+                keyPath:  keyPath,
+        }
+
+
+
+
+        if err := result.init(); err != nil {
+                return nil, err
+        }
+
+        return result, nil
+}
+
+func (cr *certReloader) init() error {
+        if err := cr.maybeReload(); err != nil {
+                return err
+        }
+        go func() {
+                c := make(chan os.Signal, 1)
+                signal.Notify(c, syscall.SIGHUP)
+                for range c {
+                        log.Printf("Received SIGHUP, reloading TLS certificate and key from %q and %q", cr.certPath, cr.keyPath)
+                        if err := cr.maybeReload(); err != nil {
+                                log.Printf("Keeping old TLS certificate because the new one could not be loaded: %v", err)
+                        }
+                }
+        }()
+	return nil
+}
+
+func (cr *certReloader) maybeReload() error {
+        newCert, err := tls.LoadX509KeyPair(cr.certPath, cr.keyPath)
+        if err != nil {
+                return err
+        }
+        cr.certMu.Lock()
+        defer cr.certMu.Unlock()
+        cr.cert = &newCert
+        return nil
+}
+
+func (cr *certReloader) GetCertificateFunc() func(*tls.ClientHelloInfo) (*tls.Certificate, error) { 
+        return func(clientHello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+                cr.certMu.RLock()
+                defer cr.certMu.RUnlock()
+                return cr.cert, nil
+        }
+}
+
 
 func main() {
 
@@ -48,7 +110,14 @@ func main() {
 		Handler:   &h,
 		TLSConfig: cfg,
 	}
-	log.Fatal(srv.ListenAndServeTLS(certPath+"/fullchain.pem", certPath+"/privkey.pem"))
+	cr, err := NewCertReloader(certPath+"/fullchain.pem", certPath+"/privkey.pem")
+	if err != nil {
+		log.Fatal(err)
+	}
+	srv.TLSConfig.GetCertificate = cr.GetCertificateFunc()
+
+	//log.Fatal(srv.ListenAndServeTLS(certPath+"/fullchain.pem", certPath+"/privkey.pem"))
+	log.Fatal(srv.ListenAndServeTLS("",""))
 }
 
 type handler struct {
