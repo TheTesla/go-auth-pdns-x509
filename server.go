@@ -6,7 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
+	//"encoding/pem"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -35,17 +35,12 @@ func main() {
 		ClientCAs:  caCertPool,
 	}
 	h := handler{}
-	h.SetCAKey("dec.ca.key.pem")
-	h.SetCACert("ca-root.pem")
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGHUP)
 	go func() {
 		for sig := range c {
 			println(sig)
 			fmt.Printf("Got A HUP Signal! Now Reloading Conf....\n")
-			//h.SetCAKey("/var/www/api/ca/private/dec.ca.key.pem")
-			h.SetCAKey("dec.ca.key.pem")
-			h.SetCACert("ca.cert.pem")
 		}
 	}()
 	srv := &http.Server{
@@ -57,23 +52,10 @@ func main() {
 }
 
 type handler struct {
-	caKeyPriv interface{}
-	caCert    *x509.Certificate
+	//caKeyPriv interface{}
+	//caCert    *x509.Certificate
 }
 
-func (h *handler) SetCAKey(filename string) {
-	caKey, _ := ioutil.ReadFile(filename)
-	caKeyBytes, _ := pem.Decode([]byte(caKey))
-	h.caKeyPriv, _ = x509.ParsePKCS1PrivateKey(caKeyBytes.Bytes)
-	fmt.Printf("Loaded CA key: %s\n", filename)
-}
-
-func (h *handler) SetCACert(filename string) {
-	caCert, _ := ioutil.ReadFile(filename)
-	caCertBytes, _ := pem.Decode([]byte(caCert))
-	h.caCert, _ = x509.ParseCertificate(caCertBytes.Bytes)
-	fmt.Printf("Loaded CA cert: %s\n", filename)
-}
 
 type JSONrequest struct {
 	method		string
