@@ -190,19 +190,19 @@ func contactPDNS(jsonReq JSONrequest, baseURL string, apiKey string) (string, in
 	var resp	*http.Response
 	var respBA	[]byte
 	if body, err = json.Marshal(jsonReq.jsonInterface); nil != err {
-		return "{\"error\": \"internal error - unable to generate json string\"}", 0, err
+		return "{\"error\": \"internal error - unable to generate json string\"}", 500, err
 	}
 	bodyrdr := strings.NewReader(string(body))
 	if r, err = http.NewRequest(jsonReq.method, baseURL+jsonReq.urlpath, bodyrdr); nil != err {
-		return "{\"error\": \"internal error - unable to create backend request\"}", 0, err
+		return "{\"error\": \"internal error - unable to create backend request\"}", 500, err
 	}
 	r.Header.Set("X-Api-Key", apiKey)
 	if resp, err = http.DefaultClient.Do(r); nil != err {
-		return "{\"error\": \"internal error - unable to contact pdns api\"}", 0, err
+		return "{\"error\": \"internal error - unable to contact pdns api\"}", 502, err
 	}
 	defer resp.Body.Close()
 	if respBA, err = ioutil.ReadAll(resp.Body); nil != err {
-		return "{\"error\": \"internal error - unable to read body of pdns api response\"}", 0, err
+		return "{\"error\": \"internal error - unable to read body of pdns api response\"}", 502, err
 	}
 	respBody := string(respBA)
 	return respBody, resp.StatusCode, nil
