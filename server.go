@@ -183,16 +183,29 @@ func handleJSONdecodeError(jsonReq JSONrequest, w http.ResponseWriter) (interfac
 	return jsonReq.decodeErr
 }
 
-func contactPDNS(jsonReq JSONrequest, baseURL string, apiKey string) (respBody string, respStatusCode int) {
-	body, _ := json.Marshal(jsonReq.jsonInterface)
+func contactPDNS(jsonReq JSONrequest, baseURL string, apiKey string) (string, int, error) {
+	var err error
+	var body []byte
+	var r *http.Request
+	var resp *http.Response
+	var respBA []byte
+	if body, err = json.Marshal(jsonReq.jsonInterface); nil != err {
+		return "error", 0, err
+	}
 	bodyrdr := strings.NewReader(string(body))
-	r, _ := http.NewRequest(jsonReq.method, baseURL+jsonReq.urlpath, bodyrdr)
+	if r, err = http.NewRequest(jsonReq.method, baseURL+jsonReq.urlpath, bodyrdr); nil != err {
+		return "error", 0, err
+	}
 	r.Header.Set("X-Api-Key", apiKey)
-	resp, _ := http.DefaultClient.Do(r)
-	respBA, _ := ioutil.ReadAll(resp.Body)
-	respBody = string(respBA)
+	if resp, err = http.DefaultClient.Do(r); nil != err {
+		return "error", 0, err
+	}
 	defer resp.Body.Close()
-	return respBody, resp.StatusCode
+	if respBA, err = ioutil.ReadAll(resp.Body); nil != err {
+		return "error", 0, err
+	}
+	respBody := string(respBA)
+	return respBody, resp.StatusCode, nil
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -209,7 +222,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	fmt.Println(DNSName)
 	if ok, name := IsSubset([]string{DNSName}, peerDNSNames); ok {
-		respBody, respStatusCode := contactPDNS(jsonReq, "http://localhost:8081", "changeme")
+		respBody, respStatusCode, _ := contactPDNS(jsonReq, "http://localhost:8081", "changeme")
 		w.WriteHeader(respStatusCode)
 		w.Write([]byte(respBody))
 	} else {
