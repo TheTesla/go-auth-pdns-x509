@@ -49,19 +49,9 @@ func (ccr *ClientConfigReloader) init() error {
         }
 	ccr.config.ClientAuth = tls.RequireAndVerifyClientCert
 	ccr.reloadCaCertPool()
-        go func() {
-                c := make(chan os.Signal, 1)
-                signal.Notify(c, syscall.SIGHUP)
-                for range c {
-                        log.Printf("Received SIGHUP, reloading TLS certificate and key from %q and %q", ccr.certPath, ccr.keyPath)
-                        if err := ccr.reloadServerCert(); err != nil {
-                                log.Printf("Keeping old TLS certificate because the new one could not be loaded: %v", err)
-                        }
-			ccr.reloadCaCertPool()
-                }
-        }()
 	return nil
 }
+
 func (ccr *ClientConfigReloader) GetConfigForClientFunc() func(*tls.ClientHelloInfo) (*tls.Config, error) {
         return func(clientHello *tls.ClientHelloInfo) (*tls.Config, error) {
                 ccr.configMu.RLock()
@@ -70,9 +60,22 @@ func (ccr *ClientConfigReloader) GetConfigForClientFunc() func(*tls.ClientHelloI
         }
 }
 
+func (ccr *ClientConfigReloader) reload() {
+	if err := ccr.reloadServerCert(); err != nil {
+		log.Printf("Keeping old TLS certificate because the new one could not be loaded: %v", err)
+	}
+	if err := ccr.reloadCaCertPool(); err != nil {
+		log.Printf("Keeping old CA certificates because the new one could not be loaded: %v", err)
+	}
+}
+
 func (ccr *ClientConfigReloader) reloadServerCert() error {
-        newCert, err := tls.LoadX509KeyPair(ccr.certPath, ccr.keyPath)
-        if err != nil {
+	var err		error
+	var newCert	tls.Certificate
+
+	log.Printf("Loading server certificate: %s", ccr.certPath)
+	log.Printf("               ... and key: %s", ccr.keyPath)
+        if newCert, err = tls.LoadX509KeyPair(ccr.certPath, ccr.keyPath); err != nil {
                 return err
         }
         ccr.configMu.Lock()
@@ -82,25 +85,26 @@ func (ccr *ClientConfigReloader) reloadServerCert() error {
 }
 
 func (ccr *ClientConfigReloader) reloadCaCertPool() error {
-	files, err := ioutil.ReadDir(ccr.caPath)
-	if err != nil {
-	    log.Fatal(err)
-	}
+	var err		error
+	var caCert	[]byte
+	var files	[]os.FileInfo
 
+	if files, err = ioutil.ReadDir(ccr.caPath); err != nil {
+	    return err
+	}
+	log.Printf("Adding CA certificates to pool")
 	caCertPool := x509.NewCertPool()
 	for _, f := range files {
-	        fmt.Println(f.Name())
 		if f.IsDir() {
 			continue
 		}
-		caCert, err := ioutil.ReadFile(ccr.caPath+f.Name())
-		if err != nil {
-			log.Fatal(err)
+		if caCert, err = ioutil.ReadFile(ccr.caPath+f.Name()); err != nil {
+			return err
 		}
 		if false == caCertPool.AppendCertsFromPEM(caCert) {
-			//log.Fatal("not a pem file")
-			fmt.Println("not a pem file")
+			continue
 		}
+		log.Printf(" - %s",ccr.caPath+f.Name())
 	}
 
         ccr.configMu.Lock()
@@ -121,16 +125,18 @@ func main() {
 	caCertPool.AppendCertsFromPEM(caCert)
 	cfg := &tls.Config{
 		//ClientAuth: tls.RequestClientCert,
+		//Certificates: []tls.Certificate{},
 		ClientAuth: tls.RequireAndVerifyClientCert,
 		ClientCAs:  caCertPool,
 	}
 	h := handler{}
 	c := make(chan os.Signal, 1)
+	ccr, err := NewClientConfigReloader(certPath+"/fullchain.pem", certPath+"/privkey.pem", "ca/")
 	signal.Notify(c, syscall.SIGHUP)
 	go func() {
 		for sig := range c {
-			println(sig)
-			fmt.Printf("Got A HUP Signal! Now Reloading Conf....\n")
+			log.Printf("Received signal: %v", sig)
+			ccr.reload()
 		}
 	}()
 	srv := &http.Server{
@@ -138,7 +144,6 @@ func main() {
 		Handler:   &h,
 		TLSConfig: cfg,
 	}
-	ccr, err := NewClientConfigReloader(certPath+"/fullchain.pem", certPath+"/privkey.pem", "ca/")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -146,6 +151,7 @@ func main() {
 
 	//log.Fatal(srv.ListenAndServeTLS(certPath+"/fullchain.pem", certPath+"/privkey.pem"))
 	log.Fatal(srv.ListenAndServeTLS(certPath+"/fullchain.pem", certPath+"/privkey.pem"))
+	//log.Fatal(srv.ListenAndServeTLS("nil", "nil"))
 }
 
 type handler struct {
