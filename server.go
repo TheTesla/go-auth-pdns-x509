@@ -20,22 +20,66 @@ import (
 	"sync"
 )
 
-
-
-type ClientConfigReloader struct {
-	configMu	sync.RWMutex
-	config		*tls.Config
+type SystemConfigReloader struct {
+	configPath	string
+	internalURL	string
+	externalAddr	string
+	apiKey		string
 	certPath	string
 	keyPath		string
 	caPath		string
 }
 
-func NewClientConfigReloader(certPath, keyPath, caPath string) (*ClientConfigReloader, error) {
+func NewSystemConfigReloader(configPath string) (*SystemConfigReloader, error) {
+	result := &SystemConfigReloader{
+		configPath: configPath,
+	}
+	if err := result.init(); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func (cfg *SystemConfigReloader) init() error {
+	cfg.configPath	 = "go-auth-pdns-x509.cfg"
+	cfg.internalURL  = "http://localhost:8081"
+	cfg.externalAddr = ":8443"
+	cfg.apiKey	 = "changeme"
+	cfg.certPath	 = "/etc/ssl/api.smartrns.net/fullchain.pem" 
+	cfg.keyPath	 = "/etc/ssl/api.smartrns.net/privkey.pem"
+	cfg.caPath	 = "ca/"
+	if err := cfg.reload(); err != nil {
+		log.Printf("Keeping old configuration because the new one could not be loaded: %v", err)
+		return err
+	}
+	return nil
+}
+
+func (cfg *SystemConfigReloader) reload() error {
+	var err		error
+	var cfgBA	[]byte
+	if cfgBA, err = ioutil.ReadFile(cfg.configPath); err != nil {
+		return err
+	}
+	if err = json.Unmarshal(cfgBA, cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+type ClientConfigReloader struct {
+	configMu	sync.RWMutex
+	config		*tls.Config
+	systemCfg	*SystemConfigReloader
+	certPath	string
+	keyPath		string
+	caPath		string
+}
+
+func NewClientConfigReloader(systemCfg *SystemConfigReloader) (*ClientConfigReloader, error) {
         result := &ClientConfigReloader{
 		config:		&tls.Config{},
-                certPath:	certPath,
-                keyPath:	keyPath,
-		caPath:		caPath,
+		systemCfg:	systemCfg,
         }
         if err := result.init(); err != nil {
                 return nil, err
@@ -44,11 +88,13 @@ func NewClientConfigReloader(certPath, keyPath, caPath string) (*ClientConfigRel
 }
 
 func (ccr *ClientConfigReloader) init() error {
-        if err := ccr.reloadServerCert(); err != nil {
-                return err
-        }
 	ccr.config.ClientAuth = tls.RequireAndVerifyClientCert
-	ccr.reloadCaCertPool()
+	if err := ccr.reloadServerCert(); err != nil {
+		return err
+	}
+	if err := ccr.reloadCaCertPool(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -73,9 +119,9 @@ func (ccr *ClientConfigReloader) reloadServerCert() error {
 	var err		error
 	var newCert	tls.Certificate
 
-	log.Printf("Loading server certificate: %s", ccr.certPath)
-	log.Printf("               ... and key: %s", ccr.keyPath)
-        if newCert, err = tls.LoadX509KeyPair(ccr.certPath, ccr.keyPath); err != nil {
+	log.Printf("Loading server certificate: %s", ccr.systemCfg.certPath)
+	log.Printf("               ... and key: %s", ccr.systemCfg.keyPath)
+        if newCert, err = tls.LoadX509KeyPair(ccr.systemCfg.certPath, ccr.systemCfg.keyPath); err != nil {
                 return err
         }
         ccr.configMu.Lock()
@@ -89,7 +135,7 @@ func (ccr *ClientConfigReloader) reloadCaCertPool() error {
 	var caCert	[]byte
 	var files	[]os.FileInfo
 
-	if files, err = ioutil.ReadDir(ccr.caPath); err != nil {
+	if files, err = ioutil.ReadDir(ccr.systemCfg.caPath); err != nil {
 	    return err
 	}
 	log.Printf("Adding CA certificates to pool")
@@ -98,13 +144,13 @@ func (ccr *ClientConfigReloader) reloadCaCertPool() error {
 		if f.IsDir() {
 			continue
 		}
-		if caCert, err = ioutil.ReadFile(ccr.caPath+f.Name()); err != nil {
+		if caCert, err = ioutil.ReadFile(ccr.systemCfg.caPath+f.Name()); err != nil {
 			return err
 		}
 		if false == caCertPool.AppendCertsFromPEM(caCert) {
 			continue
 		}
-		log.Printf(" - %s",ccr.caPath+f.Name())
+		log.Printf(" - %s",ccr.systemCfg.caPath+f.Name())
 	}
 
         ccr.configMu.Lock()
@@ -116,26 +162,22 @@ func (ccr *ClientConfigReloader) reloadCaCertPool() error {
 func main() {
 
 	certPath := "/etc/ssl/api.smartrns.net"
-	//caCert, err := ioutil.ReadFile("/var/www/api/ca/certs/ca.cert.pem")
-	caCert, err := ioutil.ReadFile("./ca/ca-root.pem")
+	cfg := &tls.Config{}
+	h := handler{}
+	c := make(chan os.Signal, 1)
+	syscfg, err2 := NewSystemConfigReloader("")
+	log.Println(err2)
+	ccr, err := NewClientConfigReloader(syscfg)
 	if err != nil {
 		log.Fatal(err)
 	}
-	caCertPool := x509.NewCertPool()
-	caCertPool.AppendCertsFromPEM(caCert)
-	cfg := &tls.Config{
-		//ClientAuth: tls.RequestClientCert,
-		//Certificates: []tls.Certificate{},
-		ClientAuth: tls.RequireAndVerifyClientCert,
-		ClientCAs:  caCertPool,
-	}
-	h := handler{}
-	c := make(chan os.Signal, 1)
-	ccr, err := NewClientConfigReloader(certPath+"/fullchain.pem", certPath+"/privkey.pem", "ca/")
 	signal.Notify(c, syscall.SIGHUP)
 	go func() {
 		for sig := range c {
 			log.Printf("Received signal: %v", sig)
+			if err := syscfg.reload(); err != nil {
+				log.Printf("SystemConfigReload error: %v", err)
+			}
 			ccr.reload()
 		}
 	}()
@@ -143,9 +185,6 @@ func main() {
 		Addr:      ":8443",
 		Handler:   &h,
 		TLSConfig: cfg,
-	}
-	if err != nil {
-		log.Fatal(err)
 	}
 	srv.TLSConfig.GetConfigForClient = ccr.GetConfigForClientFunc()
 
