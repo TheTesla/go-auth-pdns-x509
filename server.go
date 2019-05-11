@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	//"crypto/rand"
 	//"errors"
 	"crypto/tls"
@@ -41,7 +42,6 @@ func NewSystemConfigReloader(configPath string) (*SystemConfigReloader, error) {
 }
 
 func (cfg *SystemConfigReloader) init() error {
-	cfg.configPath	 = "go-auth-pdns-x509.cfg"
 	cfg.internalURL  = "http://localhost:8081"
 	cfg.externalAddr = ":8443"
 	cfg.apiKey	 = "changeme"
@@ -71,9 +71,6 @@ type ClientConfigReloader struct {
 	configMu	sync.RWMutex
 	config		*tls.Config
 	systemCfg	*SystemConfigReloader
-	certPath	string
-	keyPath		string
-	caPath		string
 }
 
 func NewClientConfigReloader(systemCfg *SystemConfigReloader) (*ClientConfigReloader, error) {
@@ -160,17 +157,18 @@ func (ccr *ClientConfigReloader) reloadCaCertPool() error {
 }
 
 func main() {
-
-	certPath := "/etc/ssl/api.smartrns.net"
-	cfg := &tls.Config{}
-	h := handler{}
-	c := make(chan os.Signal, 1)
-	syscfg, err2 := NewSystemConfigReloader("")
-	log.Println(err2)
+	var configPath string
+	flag.StringVar(&configPath, "c", "go-auth-pdns-x509.cfg", "configfile")
+	flag.Parse()
+	syscfg, err := NewSystemConfigReloader(configPath)
+	if err != nil {
+		log.Println(err)
+	}
 	ccr, err := NewClientConfigReloader(syscfg)
 	if err != nil {
 		log.Fatal(err)
 	}
+	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGHUP)
 	go func() {
 		for sig := range c {
@@ -182,18 +180,18 @@ func main() {
 		}
 	}()
 	srv := &http.Server{
-		Addr:      ":8443",
-		Handler:   &h,
-		TLSConfig: cfg,
+		Addr:      syscfg.externalAddr,
+		Handler:   &handler{syscfg: syscfg},
+		TLSConfig: &tls.Config{},
 	}
 	srv.TLSConfig.GetConfigForClient = ccr.GetConfigForClientFunc()
 
-	//log.Fatal(srv.ListenAndServeTLS(certPath+"/fullchain.pem", certPath+"/privkey.pem"))
-	log.Fatal(srv.ListenAndServeTLS(certPath+"/fullchain.pem", certPath+"/privkey.pem"))
+	log.Fatal(srv.ListenAndServeTLS(syscfg.certPath, syscfg.keyPath))
 	//log.Fatal(srv.ListenAndServeTLS("nil", "nil"))
 }
 
 type handler struct {
+	syscfg		*SystemConfigReloader
 	//caKeyPriv interface{}
 	//caCert    *x509.Certificate
 }
@@ -267,7 +265,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	fmt.Println(DNSName)
 	if ok, name := IsSubset([]string{DNSName}, peerDNSNames); ok {
-		respBody, respStatusCode, _ := contactPDNS(jsonReq, "http://localhost:8081", "changeme")
+		respBody, respStatusCode, err := contactPDNS(jsonReq, h.syscfg.internalURL, h.syscfg.apiKey)
+		if err != nil {
+			log.Printf("error in contactPDNS: %v", err)
+		}
 		w.WriteHeader(respStatusCode)
 		w.Write([]byte(respBody))
 	} else {
