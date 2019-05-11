@@ -33,7 +33,13 @@ type SystemConfigReloader struct {
 
 func NewSystemConfigReloader(configPath string) (*SystemConfigReloader, error) {
 	result := &SystemConfigReloader{
-		configPath: configPath,
+		configPath:	configPath,
+		internalURL:	"http://localhost:8081",
+		externalAddr:	":8443",
+		apiKey:		"changeme",
+		certPath:	"/etc/ssl/api.smartrns.net/fullchain.pem", 
+		keyPath:	"/etc/ssl/api.smartrns.net/privkey.pem",
+		caPath:		"ca/",
 	}
 	if err := result.init(); err != nil {
 		return result, err
@@ -42,14 +48,8 @@ func NewSystemConfigReloader(configPath string) (*SystemConfigReloader, error) {
 }
 
 func (cfg *SystemConfigReloader) init() error {
-	cfg.internalURL  = "http://localhost:8081"
-	cfg.externalAddr = ":8443"
-	cfg.apiKey	 = "changeme"
-	cfg.certPath	 = "/etc/ssl/api.smartrns.net/fullchain.pem" 
-	cfg.keyPath	 = "/etc/ssl/api.smartrns.net/privkey.pem"
-	cfg.caPath	 = "ca/"
 	if err := cfg.reload(); err != nil {
-		log.Printf("Keeping old configuration because the new one could not be loaded: %v", err)
+		log.Printf("Using default configuration because the new one could not be loaded: %v", err)
 		return err
 	}
 	return nil
@@ -185,15 +185,11 @@ func main() {
 		TLSConfig: &tls.Config{},
 	}
 	srv.TLSConfig.GetConfigForClient = ccr.GetConfigForClientFunc()
-
 	log.Fatal(srv.ListenAndServeTLS(syscfg.certPath, syscfg.keyPath))
-	//log.Fatal(srv.ListenAndServeTLS("nil", "nil"))
 }
 
 type handler struct {
 	syscfg		*SystemConfigReloader
-	//caKeyPriv interface{}
-	//caCert    *x509.Certificate
 }
 
 
