@@ -285,15 +285,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-
-	//peerCerts := req.TLS.PeerCertificates
-
-	//peerDNSNames := peerCerts[0].DNSNames
-
 	DNSName := getDNSName(jsonReq.urlpath, jsonReq.jsonInterface)
 
 	fmt.Println(DNSName)
-	//if ok, name := IsSubset([]string{DNSName}, peerDNSNames); ok {
 	if ok, name := isNameInChain(DNSName, req.TLS.VerifiedChains); ok {
 		respBody, respStatusCode, err := contactPDNS(jsonReq, h.syscfg.InternalURL, h.syscfg.ApiKey)
 		if err != nil {
