@@ -260,20 +260,40 @@ func contactPDNS(jsonReq JSONrequest, baseURL string, apiKey string) (string, in
 	return respBody, resp.StatusCode, nil
 }
 
+
+func isNameInChain(cmdName string, verifiedChains [][]*x509.Certificate) (bool, string) {
+	var name string
+	var ok bool
+NotSucceed:
+	for _, chain := range verifiedChains {
+		for _, cert := range chain {
+			if ok, name = IsSubset([]string{cmdName}, cert.DNSNames); !ok {
+				break NotSucceed
+			}
+		}
+		return true, name
+	}
+	return false, ""
+}
+
 func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	log.Printf("PeerCerts: %v", req.TLS.PeerCertificates)
+	log.Printf("Verified: %v", req.TLS.VerifiedChains)
 	jsonReq := decodeJSONrequest(req)
 	if err := handleJSONdecodeError(jsonReq, w); err != nil {
 		return
 	}
 
-	peerCerts := req.TLS.PeerCertificates
 
-	peerDNSNames := peerCerts[0].DNSNames
+	//peerCerts := req.TLS.PeerCertificates
+
+	//peerDNSNames := peerCerts[0].DNSNames
 
 	DNSName := getDNSName(jsonReq.urlpath, jsonReq.jsonInterface)
 
 	fmt.Println(DNSName)
-	if ok, name := IsSubset([]string{DNSName}, peerDNSNames); ok {
+	//if ok, name := IsSubset([]string{DNSName}, peerDNSNames); ok {
+	if ok, name := isNameInChain(DNSName, req.TLS.VerifiedChains); ok {
 		respBody, respStatusCode, err := contactPDNS(jsonReq, h.syscfg.InternalURL, h.syscfg.ApiKey)
 		if err != nil {
 			log.Printf("error in contactPDNS: %v", err)
