@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"path/filepath"
 	//"crypto/rand"
 	//"errors"
 	"crypto/tls"
@@ -22,24 +23,24 @@ import (
 )
 
 type SystemConfigReloader struct {
-	configPath	string
-	internalURL	string
-	externalAddr	string
-	apiKey		string
-	certPath	string
-	keyPath		string
-	caPath		string
+	ConfigPath	string
+	InternalURL	string
+	ExternalAddr	string
+	ApiKey		string
+	CertPath	string
+	KeyPath		string
+	CaPaths		[]string
 }
 
 func NewSystemConfigReloader(configPath string) (*SystemConfigReloader, error) {
 	result := &SystemConfigReloader{
-		configPath:	configPath,
-		internalURL:	"http://localhost:8081",
-		externalAddr:	":8443",
-		apiKey:		"changeme",
-		certPath:	"/etc/ssl/api.smartrns.net/fullchain.pem", 
-		keyPath:	"/etc/ssl/api.smartrns.net/privkey.pem",
-		caPath:		"ca/",
+		ConfigPath:	configPath,
+		InternalURL:	"http://localhost:8081",
+		ExternalAddr:	":8443",
+		ApiKey:		"changeme",
+		CertPath:	"/etc/ssl/api.smartrns.net/fullchain.pem", 
+		KeyPath:	"/etc/ssl/api.smartrns.net/privkey.pem",
+		CaPaths:	[]string{"ca/"},
 	}
 	if err := result.init(); err != nil {
 		return result, err
@@ -58,12 +59,14 @@ func (cfg *SystemConfigReloader) init() error {
 func (cfg *SystemConfigReloader) reload() error {
 	var err		error
 	var cfgBA	[]byte
-	if cfgBA, err = ioutil.ReadFile(cfg.configPath); err != nil {
+	if cfgBA, err = ioutil.ReadFile(cfg.ConfigPath); err != nil {
 		return err
 	}
-	if err = json.Unmarshal(cfgBA, cfg); err != nil {
+
+	if err = json.Unmarshal(cfgBA, &cfg); err != nil {
 		return err
 	}
+	log.Printf("Reading config: %v", cfg)
 	return nil
 }
 
@@ -116,9 +119,9 @@ func (ccr *ClientConfigReloader) reloadServerCert() error {
 	var err		error
 	var newCert	tls.Certificate
 
-	log.Printf("Loading server certificate: %s", ccr.systemCfg.certPath)
-	log.Printf("               ... and key: %s", ccr.systemCfg.keyPath)
-        if newCert, err = tls.LoadX509KeyPair(ccr.systemCfg.certPath, ccr.systemCfg.keyPath); err != nil {
+	log.Printf("Loading server certificate: %s", ccr.systemCfg.CertPath)
+	log.Printf("               ... and key: %s", ccr.systemCfg.KeyPath)
+        if newCert, err = tls.LoadX509KeyPair(ccr.systemCfg.CertPath, ccr.systemCfg.KeyPath); err != nil {
                 return err
         }
         ccr.configMu.Lock()
@@ -128,28 +131,38 @@ func (ccr *ClientConfigReloader) reloadServerCert() error {
 }
 
 func (ccr *ClientConfigReloader) reloadCaCertPool() error {
-	var err		error
 	var caCert	[]byte
 	var files	[]os.FileInfo
-
-	if files, err = ioutil.ReadDir(ccr.systemCfg.caPath); err != nil {
-	    return err
-	}
-	log.Printf("Adding CA certificates to pool")
 	caCertPool := x509.NewCertPool()
-	for _, f := range files {
-		if f.IsDir() {
-			continue
-		}
-		if caCert, err = ioutil.ReadFile(ccr.systemCfg.caPath+f.Name()); err != nil {
+	for _, cadir := range ccr.systemCfg.CaPaths {
+		log.Printf("Reading ca path: %s", cadir)
+		file, err := os.Stat(cadir)
+		if err != nil {
 			return err
 		}
-		if false == caCertPool.AppendCertsFromPEM(caCert) {
-			continue
+		if !file.IsDir() {
+			files = []os.FileInfo{file}
+			cadir = filepath.Dir(cadir)
+		} else {
+			if files, err = ioutil.ReadDir(cadir); err != nil {
+				return err
+			}
 		}
-		log.Printf(" - %s",ccr.systemCfg.caPath+f.Name())
+		log.Printf("Adding CA certificates to pool")
+		for _, f := range files {
+			if f.IsDir() {
+				continue
+			}
+			capath := filepath.Join(cadir, f.Name())
+			if caCert, err = ioutil.ReadFile(capath); err != nil {
+				return err
+			}
+			if false == caCertPool.AppendCertsFromPEM(caCert) {
+				continue
+			}
+			log.Printf(" - %s", capath)
+		}
 	}
-
         ccr.configMu.Lock()
         defer ccr.configMu.Unlock()
 	ccr.config.ClientCAs = caCertPool
@@ -180,12 +193,12 @@ func main() {
 		}
 	}()
 	srv := &http.Server{
-		Addr:      syscfg.externalAddr,
+		Addr:      syscfg.ExternalAddr,
 		Handler:   &handler{syscfg: syscfg},
 		TLSConfig: &tls.Config{},
 	}
 	srv.TLSConfig.GetConfigForClient = ccr.GetConfigForClientFunc()
-	log.Fatal(srv.ListenAndServeTLS(syscfg.certPath, syscfg.keyPath))
+	log.Fatal(srv.ListenAndServeTLS(syscfg.CertPath, syscfg.KeyPath))
 }
 
 type handler struct {
@@ -261,7 +274,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	fmt.Println(DNSName)
 	if ok, name := IsSubset([]string{DNSName}, peerDNSNames); ok {
-		respBody, respStatusCode, err := contactPDNS(jsonReq, h.syscfg.internalURL, h.syscfg.apiKey)
+		respBody, respStatusCode, err := contactPDNS(jsonReq, h.syscfg.InternalURL, h.syscfg.ApiKey)
 		if err != nil {
 			log.Printf("error in contactPDNS: %v", err)
 		}
