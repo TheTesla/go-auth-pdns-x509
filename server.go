@@ -264,14 +264,15 @@ func contactPDNS(jsonReq JSONrequest, baseURL string, apiKey string) (string, in
 func isNameInChain(cmdName string, verifiedChains [][]*x509.Certificate) (bool, string) {
 	var name string
 	var ok bool
-NotSucceed:
 	for _, chain := range verifiedChains {
 		for _, cert := range chain {
 			if ok, name = IsSubset([]string{cmdName}, cert.DNSNames); !ok {
-				break NotSucceed
+				break
 			}
 		}
-		return true, name
+		if ok {
+			return true, name
+		}
 	}
 	return false, ""
 }
