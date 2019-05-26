@@ -20,6 +20,7 @@ import (
 	"syscall"
 	//"time"
 	"sync"
+	"io"
 )
 
 type SystemConfigReloader struct {
@@ -30,6 +31,7 @@ type SystemConfigReloader struct {
 	CertPath	string
 	KeyPath		string
 	CaPaths		[]string
+	CaTempPath	string
 }
 
 func NewSystemConfigReloader(configPath string) (*SystemConfigReloader, error) {
@@ -41,6 +43,7 @@ func NewSystemConfigReloader(configPath string) (*SystemConfigReloader, error) {
 		CertPath:	"/etc/ssl/api.smartrns.net/fullchain.pem", 
 		KeyPath:	"/etc/ssl/api.smartrns.net/privkey.pem",
 		CaPaths:	[]string{"ca/"},
+		CaTempPath:	"catmp/",
 	}
 	if err := result.init(); err != nil {
 		return result, err
@@ -136,6 +139,15 @@ func (ccr *ClientConfigReloader) reloadCaCertPool() error {
 	caCertPool := x509.NewCertPool()
 	for _, cadir := range ccr.systemCfg.CaPaths {
 		log.Printf("Reading ca path: %s", cadir)
+		if strings.HasPrefix(cadir,"https://") {
+			log.Printf("Downloading CA certificates to pool")
+			caTempFilename := filepath.Join(ccr.systemCfg.CaTempPath, strings.Replace(cadir[8:], "/", "_", -1))
+			err := fileGet(caTempFilename, cadir)
+			if err != nil {
+				return err
+			}
+			cadir = caTempFilename
+		}
 		file, err := os.Stat(cadir)
 		if err != nil {
 			return err
@@ -332,3 +344,27 @@ func IsSubset(x, y []string) (bool, string) {
 	}
 	return true, ""
 }
+
+
+func fileGet(filepath string, url string) error {
+
+    // Get the data
+    resp, err := http.Get(url)
+    if err != nil {
+        return err
+    }
+    defer resp.Body.Close()
+
+    // Create the file
+    out, err := os.Create(filepath)
+    if err != nil {
+        return err
+    }
+    defer out.Close()
+
+    // Write the body to file
+    _, err = io.Copy(out, resp.Body)
+    return err
+}
+
+
