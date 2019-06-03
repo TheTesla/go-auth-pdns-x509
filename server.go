@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"flag"
+	"path"
 	"path/filepath"
 	//"crypto/rand"
 	//"errors"
@@ -15,6 +17,8 @@ import (
 	"strings"
 	//"math/big"
 	"net/http"
+	"net/url"
+	"golang.org/x/net/html"
 	"os"
 	"os/signal"
 	"syscall"
@@ -346,25 +350,72 @@ func IsSubset(x, y []string) (bool, string) {
 }
 
 
-func fileGet(filepath string, url string) error {
+func fileGet(dest string, srcurl string) error {
 
     // Get the data
-    resp, err := http.Get(url)
+    resp, err := http.Get(srcurl)
     if err != nil {
         return err
     }
     defer resp.Body.Close()
 
+    buf := new(bytes.Buffer)
+    buf.ReadFrom(resp.Body)
+    s := buf.String() // Does a complete copy of the bytes in the buffer.
+    //log.Println(s)
+
+    links := collectLinks(strings.NewReader(s))
+    for _, link := range(links) {
+	if link[0] == '?' {
+	    continue
+	}
+	u, _ := url.Parse(srcurl)
+	u.Path = path.Join(u.Path, link)
+	log.Println(u.String())
+        err := fileGet(dest+strings.Replace(path.Base(link), "/", "_", -1), u.String())
+        if err != nil {
+            return err
+        }
+    }
     // Create the file
-    out, err := os.Create(filepath)
+    out, err := os.Create(dest)
     if err != nil {
         return err
     }
     defer out.Close()
 
     // Write the body to file
-    _, err = io.Copy(out, resp.Body)
+    _, err = io.Copy(out, strings.NewReader(s))
     return err
 }
 
+func getDirectoryListing(url string) (error, []string) {
+    // Get the data
+    resp, err := http.Get(url)
+    if err != nil {
+        return err, []string{}
+    }
+    defer resp.Body.Close()
+    return nil, collectLinks(resp.Body)
+}
+
+// http://tstra.us/code/golinkgrabber/
+func collectLinks(httpBody io.Reader) []string {
+    links := make([]string, 0)
+    page := html.NewTokenizer(httpBody)
+    for {
+        tokenType := page.Next()
+        if tokenType == html.ErrorToken {
+            return links
+        }
+        token := page.Token()
+        if tokenType == html.StartTagToken && token.DataAtom.String() == "a" {
+            for _, attr := range token.Attr {
+                if attr.Key == "href" {
+                    links = append(links, attr.Val)
+                }
+            }
+        }
+    }
+}
 
