@@ -137,48 +137,80 @@ func (ccr *ClientConfigReloader) reloadServerCert() error {
         return nil
 }
 
-func (ccr *ClientConfigReloader) reloadCaCertPool() error {
-	var caCert	[]byte
-	var files	[]os.FileInfo
-	caCertPool := x509.NewCertPool()
-	for _, cadir := range ccr.systemCfg.CaPaths {
-		log.Printf("Reading ca path: %s", cadir)
-		if strings.HasPrefix(cadir,"https://") {
-			log.Printf("Downloading CA certificates to pool")
-			caTempFilename := filepath.Join(ccr.systemCfg.CaTempPath, strings.Replace(cadir[8:], "/", "_", -1))
-			err := fileGet(caTempFilename, cadir)
+
+func getRemoteCerts(caPaths []string, caTempPath string) ([]string, error) {
+	var dests	[]string
+	log.Printf("Downloading remote ca paths")
+	for _, capath := range caPaths {
+		if strings.HasPrefix(capath,"https://") {
+			log.Printf("  -> %s", capath)
+			caTempFilename := filepath.Join(caTempPath, strings.Replace(capath[8:], "/", "_", -1))
+			destsrec, err := fileGet(caTempFilename, capath)
+			dests = append(dests, destsrec...)
 			if err != nil {
-				return err
+				return dests, err
 			}
-			cadir = caTempFilename
-		}
-		file, err := os.Stat(cadir)
-		if err != nil {
-			return err
-		}
-		if !file.IsDir() {
-			files = []os.FileInfo{file}
-			cadir = filepath.Dir(cadir)
-		} else {
-			if files, err = ioutil.ReadDir(cadir); err != nil {
-				return err
-			}
-		}
-		log.Printf("Adding CA certificates to pool")
-		for _, f := range files {
-			if f.IsDir() {
-				continue
-			}
-			capath := filepath.Join(cadir, f.Name())
-			if caCert, err = ioutil.ReadFile(capath); err != nil {
-				return err
-			}
-			if false == caCertPool.AppendCertsFromPEM(caCert) {
-				continue
-			}
-			log.Printf(" - %s", capath)
 		}
 	}
+	return dests, nil
+}
+
+
+
+func getLocalCertsSingle(caPath string) ([]string, error) {
+	var casubpaths	[]string
+	path, err := os.Stat(caPath)
+	if err != nil {
+		return []string{caPath}, err
+	}
+	if !path.IsDir() {
+		// if given path is a certificate file -> use this file as certificate
+		return []string{caPath}, nil
+	}
+	// if given path is a directory -> use all certificate files in this directory
+	subfiles, err := ioutil.ReadDir(caPath)
+	if err != nil {
+		return []string{caPath}, err
+	}
+	for _, f := range subfiles {
+		casubpath := filepath.Join(caPath, f.Name())
+		casubpaths = append(casubpaths, casubpath)
+	}
+	return casubpaths, nil
+}
+
+func getLocalCerts(caPaths []string) ([]string, error) {
+	var casubpathscol	[]string
+	for _, capath := range caPaths {
+		casubpaths, err := getLocalCertsSingle(capath)
+		if err != nil {
+			continue
+		}
+		casubpathscol = append(casubpathscol, casubpaths...)
+	}
+	return casubpathscol, nil
+
+}
+
+func (ccr *ClientConfigReloader) reloadCaCertPool() error {
+	caCertPool := x509.NewCertPool()
+
+	destsr, _ := getRemoteCerts(ccr.systemCfg.CaPaths, ccr.systemCfg.CaTempPath)
+	destsl, _ := getLocalCerts(ccr.systemCfg.CaPaths)
+	dests := append(destsr, destsl...)
+
+	log.Printf("Adding CA certificates to pool")
+	for _, capath := range dests {
+		caCert, err := ioutil.ReadFile(capath)
+		if err != nil {
+			continue
+		}
+		if false == caCertPool.AppendCertsFromPEM(caCert) {
+			continue
+		}
+		log.Printf("  -> %s", capath)
+	}
+
         ccr.configMu.Lock()
         defer ccr.configMu.Unlock()
 	ccr.config.ClientCAs = caCertPool
@@ -350,12 +382,13 @@ func IsSubset(x, y []string) (bool, string) {
 }
 
 
-func fileGet(dest string, srcurl string) error {
-
+func fileGet(dest string, srcurl string) ([]string, error) {
+    var dests	[]string
+    dests = append(dests, dest)
     // Get the data
     resp, err := http.Get(srcurl)
     if err != nil {
-        return err
+        return dests, err
     }
     defer resp.Body.Close()
 
@@ -364,6 +397,7 @@ func fileGet(dest string, srcurl string) error {
     s := buf.String() // Does a complete copy of the bytes in the buffer.
     //log.Println(s)
 
+    // if srcurl is a directorylisting -> download all files
     links := collectLinks(strings.NewReader(s))
     for _, link := range(links) {
 	if link[0] == '?' {
@@ -371,22 +405,23 @@ func fileGet(dest string, srcurl string) error {
 	}
 	u, _ := url.Parse(srcurl)
 	u.Path = path.Join(u.Path, link)
-	log.Println(u.String())
-        err := fileGet(dest+strings.Replace(path.Base(link), "/", "_", -1), u.String())
+	//log.Println(u.String())
+        destsrec, err := fileGet(dest+strings.Replace(path.Base(link), "/", "_", -1), u.String())
+	dests = append(dests, destsrec...)
         if err != nil {
-            return err
+            return dests, err
         }
     }
     // Create the file
     out, err := os.Create(dest)
     if err != nil {
-        return err
+        return dests, err
     }
     defer out.Close()
 
     // Write the body to file
     _, err = io.Copy(out, strings.NewReader(s))
-    return err
+    return dests, err
 }
 
 func getDirectoryListing(url string) (error, []string) {
