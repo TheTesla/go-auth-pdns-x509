@@ -194,23 +194,15 @@ func getLocalCerts(caPaths []string) ([]string, error) {
 func getNonExpCerts(caPaths []string) ([]string, error) {
 	var nonExpCerts	[]string
 	for _, capath := range caPaths {
-		caCert, err := ioutil.ReadFile(capath)
-		if err != nil {
+		cert, _ := readCert(capath)
+		if cert == nil {
 			continue
 		}
-		block, _ := pem.Decode([]byte(caCert))
-		if block == nil {
-			continue
-		}
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			continue
-		}
-		log.Printf("  expires: %s", cert.NotAfter)
 		now := time.Now()
-		log.Printf("  remaining: %s", cert.NotAfter.Sub(now))
 		if cert.NotAfter.Before(now) {
-			log.Printf("    -> expired")
+			log.Printf("  %s", capath)
+			log.Printf("    expires: %s", cert.NotAfter)
+			log.Printf("      -> expired")
 			continue
 		}
 		nonExpCerts = append(nonExpCerts, capath)
@@ -248,21 +240,55 @@ func rmFiles(rmPaths []string, presrvPaths []string) {
 	}
 }
 
-func (ccr *ClientConfigReloader) reloadCaCertPool() error {
-	caCertPool := x509.NewCertPool()
+// this interally used method deletes all files not being certificates not expired
+func (ccr *ClientConfigReloader) cleanUpCerts(fileNames []string) {
+	nonExp, _ := getNonExpCerts(fileNames)
+	allTempFiles, _ := getLocalCerts(append(ccr.systemCfg.CaPaths, ccr.systemCfg.CaTempPath))
+	rmFiles(allTempFiles, nonExp)
+}
 
-	destsr, _ := getRemoteCerts(ccr.systemCfg.CaPaths, ccr.systemCfg.CaTempPath)
+
+func readCert(certpath string) (*x509.Certificate, error) {
+	certPEM, err := ioutil.ReadFile(certpath)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return nil, err
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	return cert, nil
+}
+
+func showExpInfo(capath string) error {
+	log.Printf("  -> %s", capath)
+	cert, err := readCert(capath)
+	if err != nil {
+		log.Println("      Error load Certificate!")
+		return err
+	}
+	log.Printf("       expires:   %s", cert.NotAfter)
+	now := time.Now()
+	log.Printf("       remaining: %s", cert.NotAfter.Sub(now))
+	return nil
+}
+
+func (ccr *ClientConfigReloader) reloadCaCertPool() error {
+
+	destsr, err := getRemoteCerts(ccr.systemCfg.CaPaths, ccr.systemCfg.CaTempPath)
 	destsl, _ := getLocalCerts(ccr.systemCfg.CaPaths)
 	dests := append(destsr, destsl...)
-	nonExp, _ := getNonExpCerts(dests)
-	log.Println(nonExp)
-	allTempFiles, _ := getLocalCerts(append(ccr.systemCfg.CaPaths, ccr.systemCfg.CaTempPath))
-	toRM := getRMpaths(allTempFiles, nonExp)
-	log.Println(toRM)
-	rmFiles(allTempFiles, nonExp)
-
+	// cleanup all local and temporary certifcates (and other files), but only if new ones are retrieved without error
+	if err == nil {
+		ccr.cleanUpCerts(dests)
+	}
 
 	log.Printf("Adding CA certificates to pool")
+	caCertPool := x509.NewCertPool()
 	for _, capath := range dests {
 		caCert, err := ioutil.ReadFile(capath)
 		if err != nil {
@@ -271,24 +297,9 @@ func (ccr *ClientConfigReloader) reloadCaCertPool() error {
 		if false == caCertPool.AppendCertsFromPEM(caCert) {
 			continue
 		}
+		showExpInfo(capath)
 
 
-
-		block, _ := pem.Decode([]byte(caCert))
-		if block == nil {
-			continue
-		}
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			continue
-		}
-		log.Printf("expires: %s", cert.NotAfter)
-		now := time.Now()
-		log.Printf("remaining: %s", cert.NotAfter.Sub(now))
-
-
-
-		log.Printf("  -> %s", capath)
 	}
 
         ccr.configMu.Lock()
