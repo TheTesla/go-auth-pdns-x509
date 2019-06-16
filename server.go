@@ -10,7 +10,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
-	//"encoding/pem"
+	"encoding/pem"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -22,7 +22,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	//"time"
+	"time"
 	"sync"
 	"io"
 )
@@ -189,7 +189,63 @@ func getLocalCerts(caPaths []string) ([]string, error) {
 		casubpathscol = append(casubpathscol, casubpaths...)
 	}
 	return casubpathscol, nil
+}
 
+func getNonExpCerts(caPaths []string) ([]string, error) {
+	var nonExpCerts	[]string
+	for _, capath := range caPaths {
+		caCert, err := ioutil.ReadFile(capath)
+		if err != nil {
+			continue
+		}
+		block, _ := pem.Decode([]byte(caCert))
+		if block == nil {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			continue
+		}
+		log.Printf("  expires: %s", cert.NotAfter)
+		now := time.Now()
+		log.Printf("  remaining: %s", cert.NotAfter.Sub(now))
+		if cert.NotAfter.Before(now) {
+			log.Printf("    -> expired")
+			continue
+		}
+		nonExpCerts = append(nonExpCerts, capath)
+	}
+	return nonExpCerts, nil
+}
+
+func contains(needle string, haystack []string) bool {
+	for _, h := range haystack {
+		if h == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func getRMpaths(rmPaths []string, presrvPaths []string) []string {
+	var toRemove []string
+	for _, rmpath := range rmPaths {
+		if contains(rmpath, presrvPaths) {
+			continue
+		}
+		toRemove = append(toRemove, rmpath)
+	}
+	return toRemove
+}
+
+func rmFiles(rmPaths []string, presrvPaths []string) {
+	toRM := getRMpaths(rmPaths, presrvPaths)
+	for _, d := range toRM {
+		err := os.Remove(d)
+		if err != nil {
+			log.Printf("Error removing file: %v", err)
+		}
+	}
 }
 
 func (ccr *ClientConfigReloader) reloadCaCertPool() error {
@@ -198,6 +254,13 @@ func (ccr *ClientConfigReloader) reloadCaCertPool() error {
 	destsr, _ := getRemoteCerts(ccr.systemCfg.CaPaths, ccr.systemCfg.CaTempPath)
 	destsl, _ := getLocalCerts(ccr.systemCfg.CaPaths)
 	dests := append(destsr, destsl...)
+	nonExp, _ := getNonExpCerts(dests)
+	log.Println(nonExp)
+	allTempFiles, _ := getLocalCerts(append(ccr.systemCfg.CaPaths, ccr.systemCfg.CaTempPath))
+	toRM := getRMpaths(allTempFiles, nonExp)
+	log.Println(toRM)
+	rmFiles(allTempFiles, nonExp)
+
 
 	log.Printf("Adding CA certificates to pool")
 	for _, capath := range dests {
@@ -208,6 +271,23 @@ func (ccr *ClientConfigReloader) reloadCaCertPool() error {
 		if false == caCertPool.AppendCertsFromPEM(caCert) {
 			continue
 		}
+
+
+
+		block, _ := pem.Decode([]byte(caCert))
+		if block == nil {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			continue
+		}
+		log.Printf("expires: %s", cert.NotAfter)
+		now := time.Now()
+		log.Printf("remaining: %s", cert.NotAfter.Sub(now))
+
+
+
 		log.Printf("  -> %s", capath)
 	}
 
