@@ -36,6 +36,7 @@ type SystemConfigReloader struct {
 	KeyPath		string
 	CaPaths		[]string
 	CaTempPath	string
+	ReloadInterval	int
 }
 
 func NewSystemConfigReloader(configPath string) (*SystemConfigReloader, error) {
@@ -48,6 +49,7 @@ func NewSystemConfigReloader(configPath string) (*SystemConfigReloader, error) {
 		KeyPath:	"/etc/ssl/api.smartrns.net/privkey.pem",
 		CaPaths:	[]string{"ca/"},
 		CaTempPath:	"catmp/",
+		ReloadInterval:	10,
 	}
 	if err := result.init(); err != nil {
 		return result, err
@@ -308,6 +310,13 @@ func (ccr *ClientConfigReloader) reloadCaCertPool() error {
 	return nil
 }
 
+func reloadAll (syscfg *SystemConfigReloader, ccr *ClientConfigReloader) {
+	if err := syscfg.reload(); err != nil {
+		log.Printf("SystemConfigReload error: %v", err)
+	}
+	ccr.reload()
+}
+
 func main() {
 	var configPath string
 	flag.StringVar(&configPath, "c", "go-auth-pdns-x509.cfg", "configfile")
@@ -325,12 +334,22 @@ func main() {
 	go func() {
 		for sig := range c {
 			log.Printf("Received signal: %v", sig)
-			if err := syscfg.reload(); err != nil {
-				log.Printf("SystemConfigReload error: %v", err)
-			}
-			ccr.reload()
+			reloadAll(syscfg, ccr)
 		}
 	}()
+	reloadTicker := time.NewTicker(time.Second)
+	go func() {
+		cnt := 0
+		for t := range reloadTicker.C {
+			cnt += 1
+			if cnt > syscfg.ReloadInterval {
+				cnt = 0
+				fmt.Println("Tick at", t)
+				reloadAll(syscfg, ccr)
+			}
+		}
+	}()
+
 	srv := &http.Server{
 		Addr:      syscfg.ExternalAddr,
 		Handler:   &handler{syscfg: syscfg},
