@@ -75,7 +75,8 @@ func (cfg *SystemConfigReloader) reload() error {
 	if err = json.Unmarshal(cfgBA, &cfg); err != nil {
 		return err
 	}
-	log.Printf("Reading config: %v", cfg)
+	pretty, err := json.MarshalIndent(cfg, "                    ", "    ")
+	log.Printf("Reading config: %s", pretty)
 	return nil
 }
 
@@ -340,11 +341,11 @@ func main() {
 	reloadTicker := time.NewTicker(time.Second)
 	go func() {
 		cnt := 0
-		for t := range reloadTicker.C {
+		for _ = range reloadTicker.C {
 			cnt += 1
 			if cnt > syscfg.ReloadInterval {
+				log.Printf("Reload config by time interval: %d s", cnt)
 				cnt = 0
-				fmt.Println("Tick at", t)
 				reloadAll(syscfg, ccr)
 			}
 		}
