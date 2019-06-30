@@ -419,15 +419,35 @@ func contactPDNS(jsonReq JSONrequest, baseURL string, apiKey string) (string, in
 	return respBody, resp.StatusCode, nil
 }
 
+func subdomainMatches(cmdName string, certNames []string) bool {
+	for _, upperLabels := range splitLabels(cmdName) {
+		log.Printf("  Debug: %s -- %s", upperLabels, certNames)
+		if ok, _ := IsSubset([]string{upperLabels}, certNames); ok {
+			log.Printf("- break")
+			return true
+		}
+	}
+	return false
+}
 
 func isNameInChain(cmdName string, verifiedChains [][]*x509.Certificate) (bool, string) {
 	var name string
 	var ok bool
 	for _, chain := range verifiedChains {
+		log.Printf("next chain")
 		for _, cert := range chain {
-			if ok, name = IsSubset([]string{cmdName}, cert.DNSNames); !ok {
+			log.Printf("Debug: %s -- %s", splitLabels(cmdName), cert.DNSNames)
+			ok = subdomainMatches(cmdName, cert.DNSNames)
+			if !ok {
 				break
 			}
+			//for _, upperLabels := range splitLabels(cmdName) {
+			//	log.Printf("  Debug: %s -- %s", upperLabels, cert.DNSNames)
+			//	if ok, name = IsSubset([]string{upperLabels}, cert.DNSNames); !ok {
+			//		log.Printf("- break")
+			//		break
+			//	}
+			//}
 		}
 		if ok {
 			return true, name
@@ -477,6 +497,16 @@ func getDNSName(urlpath string, jsonInterface interface{}) (string) {
 		}
 	}
 	return DNSName
+}
+
+
+func splitLabels(x string) []string {
+	labels := strings.Split(x, ".")
+	labelChains := make([]string, len(labels))
+	for i, _ := range labels {
+		labelChains[i] = strings.Join(labels[i:], ".")
+	}
+	return labelChains
 }
 
 func IsSubset(x, y []string) (bool, string) {
